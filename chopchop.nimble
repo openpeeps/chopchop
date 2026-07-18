@@ -2,10 +2,9 @@
 
 version       = "0.1.0"
 author        = "George Lemon"
-description   = "A new awesome nimble package"
+description   = "High-level browser automation library around Chrome DevTools Protocol"
 license       = "MIT"
 srcDir        = "src"
-bin           = @["chopchop"]
 
 
 # Dependencies

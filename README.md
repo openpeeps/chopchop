@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://github.com/openpeeps/PKG/blob/main/.github/logo.png" width="90px"><br>
   ChopChop &mdash; A browser automation app for launching and<br>
   controlling Chrome via DevTools Protocol<br>
-  Compiled &bullet; Standalone &bullet; Domain-Specific-language &bullet; Asynchronous &bullet; 👑 Written in Nim language
+  Compiled &bullet; Standalone &bullet; Domain-Specific-language &bullet; Asynchronous &bullet;<br>
+  👑 Written in Nim language
 </p>
 
 <p align="center">
@@ -44,5 +44,5 @@
 | <a href="https://opencode.ai/go?ref=BHMEEK48QX"><img src="https://github.com/openpeeps/pistachio/blob/main/.github/opencode.png" alt="OpenCode"></a> | Switch to **Open-Source LLMs** via OpenCode GO, choosing from a variety of powerful models such as DeepSeek, Qwen, Kimi, GLM-5, MiniMax, MiMo. 🍕 [Use our referral link to get started!](https://opencode.ai/go?ref=BHMEEK48QX)|
 
 ### 🎩 License
-GPLv3 license. [Made by Humans from OpenPeeps](https://github.com/openpeeps).<br>
+MIT license. [Made by Humans from OpenPeeps](https://github.com/openpeeps).<br>
 Copyright OpenPeeps & Contributors &mdash; All rights reserved.
