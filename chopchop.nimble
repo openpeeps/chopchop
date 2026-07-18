@@ -11,4 +11,3 @@ srcDir        = "src"
 
 requires "nim >= 2.2.0"
 requires "cdp >= 0.1.0"
-requires "openparser >= 0.1.6"
