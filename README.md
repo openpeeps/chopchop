@@ -15,6 +15,7 @@
 </p>
 
 ## Key Features
+- High-level library based on [ChromeDevToolsProtocol](https://github.com/Niminem/ChromeDevToolsProtocol) package
 - **Browser automation** - launch Chrome, navigate pages, extract content
 - **DOM querying** - `querySelector` / `querySelectorAll` with full element access
 - **Mouse & keyboard** - click, double-click, hover, drag & drop, type text, press keys
