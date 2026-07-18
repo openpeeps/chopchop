@@ -1,9 +1,4 @@
-<p align="center">
-  ChopChop &mdash; A browser automation app for launching and<br>
-  controlling Chrome via DevTools Protocol<br>
-  Compiled &bullet; Standalone &bullet; Domain-Specific-language &bullet; Asynchronous &bullet;<br>
-  👑 Written in Nim language
-</p>
+<p align="center">ChopChop &mdash; A browser automation library around Chrome DevTools Protocol</p>
 
 <p align="center">
   <code>nimble install chopchop</code>
@@ -35,6 +30,9 @@
 
 ## Examples
 ...
+
+### Projects using ChopChop
+- https://github.com/dfkup/dfkup - A VM + JIT compiled scripting language written in Nim {planned as a `std/browser` package}
 
 ### ❤ Contributions & Support
 - 🐛 Found a bug? [Create a new Issue](https://github.com/openpeeps/chopchop/issues)
