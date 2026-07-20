@@ -1,4 +1,5 @@
-<p align="center">ChopChop &mdash; A browser automation library around Chrome DevTools Protocol</p>
+<p align="center">ChopChop &mdash; A browser automation library around<br>
+  Chrome DevTools Protocol</p>
 
 <p align="center">
   <code>nimble install chopchop</code>
