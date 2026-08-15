@@ -1,5 +1,5 @@
-import std/[asyncdispatch, json, strutils]
-import pkg/cdp as cdp
+import std/[asyncdispatch, json, strutils, options]
+import devtools as cdp
 
 type
   ElementHandle* = ref object
@@ -79,16 +79,15 @@ proc getAttribute*(el: ElementHandle, name: string): Future[string] {.async.} =
 proc callOn*(el: ElementHandle; fn: string): Future[JsonNode] {.async.} =
   if el.nodeId <= 0:
     return newJNull()
-  let res = await el.tab.sendCommand("DOM.resolveNode", %*{"nodeId": el.nodeId})
-  if not res.contains("result") or not res["result"].contains("object"):
+  let objectId = await el.tab.resolveNode(el.nodeId)
+  if objectId.len == 0:
     return newJNull()
-  let objectId = res["result"]["object"]["objectId"].getStr()
-  let resp = await el.tab.sendCommand("Runtime.callFunctionOn", %*{
-    "functionDeclaration": fn,
-    "objectId": objectId,
-    "returnByValue": true,
-    "awaitPromise": true
-  })
+  let resp = await el.tab.callFunctionOn(cdp.CallFunctionOnParams(
+    functionDeclaration: fn,
+    objectId: objectId,
+    returnByValue: some(true),
+    awaitPromise: some(true)
+  ))
   if resp.contains("result") and resp["result"].contains("result"):
     return resp["result"]["result"]
   return newJNull()
@@ -112,15 +111,20 @@ proc getBoundingBox*(el: ElementHandle): Future[BoundingBox] {.async.} =
 
 # ── Mouse actions ───────────────────────────────────────────────────────────
 
+proc mouseClickParams(`type`: string; x, y: float): cdp.DispatchMouseEventParams =
+  result = cdp.DispatchMouseEventParams(`type`: `type`, x: x, y: y)
+  result.button = some("left")
+  result.clickCount = some(1)
+
 proc click*(el: ElementHandle) {.async.} =
   discard await el.evalOn("el.scrollIntoViewIfNeeded()")
   await sleepAsync(50)
   let box = await el.getBoundingBox()
   let cx = box.x + box.width / 2
   let cy = box.y + box.height / 2
-  await el.tab.dispatchMouseEvent("mousePressed", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mousePressed", cx, cy))
   await sleepAsync(30)
-  await el.tab.dispatchMouseEvent("mouseReleased", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mouseReleased", cx, cy))
 
 proc dblclick*(el: ElementHandle) {.async.} =
   discard await el.evalOn("el.scrollIntoViewIfNeeded()")
@@ -128,13 +132,13 @@ proc dblclick*(el: ElementHandle) {.async.} =
   let box = await el.getBoundingBox()
   let cx = box.x + box.width / 2
   let cy = box.y + box.height / 2
-  await el.tab.dispatchMouseEvent("mousePressed", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mousePressed", cx, cy))
   await sleepAsync(30)
-  await el.tab.dispatchMouseEvent("mouseReleased", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mouseReleased", cx, cy))
   await sleepAsync(30)
-  await el.tab.dispatchMouseEvent("mousePressed", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mousePressed", cx, cy))
   await sleepAsync(30)
-  await el.tab.dispatchMouseEvent("mouseReleased", cx, cy)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mouseReleased", cx, cy))
 
 proc hover*(el: ElementHandle) {.async.} =
   discard await el.evalOn("el.scrollIntoViewIfNeeded()")
@@ -142,7 +146,7 @@ proc hover*(el: ElementHandle) {.async.} =
   let box = await el.getBoundingBox()
   let cx = box.x + box.width / 2
   let cy = box.y + box.height / 2
-  await el.tab.dispatchMouseEvent("mouseMoved", cx, cy)
+  await el.tab.dispatchMouseEvent(cdp.DispatchMouseEventParams(`type`: "mouseMoved", x: cx, y: cy))
 
 proc dragAndDrop*(el: ElementHandle, target: ElementHandle) {.async.} =
   discard await el.evalOn("el.scrollIntoViewIfNeeded()")
@@ -155,17 +159,17 @@ proc dragAndDrop*(el: ElementHandle, target: ElementHandle) {.async.} =
   let srcY = src.y + src.height / 2
   let tgtX = tgt.x + tgt.width / 2
   let tgtY = tgt.y + tgt.height / 2
-  await el.tab.dispatchMouseEvent("mousePressed", srcX, srcY)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mousePressed", srcX, srcY))
   await sleepAsync(50)
   let steps = 10
   for i in 1..steps:
     let t = i.float / steps.float
     let x = srcX + (tgtX - srcX) * t
     let y = srcY + (tgtY - srcY) * t
-    await el.tab.dispatchMouseEvent("mouseMoved", x, y)
+    await el.tab.dispatchMouseEvent(cdp.DispatchMouseEventParams(`type`: "mouseMoved", x: x, y: y))
     await sleepAsync(10)
   await sleepAsync(50)
-  await el.tab.dispatchMouseEvent("mouseReleased", tgtX, tgtY)
+  await el.tab.dispatchMouseEvent(mouseClickParams("mouseReleased", tgtX, tgtY))
 
 # ── Keyboard actions ────────────────────────────────────────────────────────
 
@@ -173,27 +177,29 @@ proc typeText*(el: ElementHandle, text: string) {.async.} =
   discard await el.evalOn("el.focus()")
   await sleepAsync(50)
   for ch in text:
-    await el.tab.dispatchKeyEvent("char", %*{"text": $ch})
+    await el.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "char", text: some($ch)))
     await sleepAsync(5)
 
 proc press*(el: ElementHandle, key: string) {.async.} =
   discard await el.evalOn("el.focus()")
   await sleepAsync(50)
   let (k, c, kc) = getKeyInfo(key)
-  await el.tab.dispatchKeyEvent("rawKeyDown", %*{"key": k, "code": c, "windowsVirtualKeyCode": kc})
+  await el.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "rawKeyDown",
+      key: some(k), code: some(c), windowsVirtualKeyCode: some(kc)))
   await sleepAsync(30)
   if kc > 0 and kc < 128 and key.len == 1:
-    await el.tab.dispatchKeyEvent("char", %*{"key": k, "code": c, "text": key})
+    await el.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "char",
+        key: some(k), code: some(c), text: some(key)))
     await sleepAsync(10)
-  await el.tab.dispatchKeyEvent("keyUp", %*{"key": k, "code": c, "windowsVirtualKeyCode": kc})
+  await el.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "keyUp",
+      key: some(k), code: some(c), windowsVirtualKeyCode: some(kc)))
 
 # ── File upload ─────────────────────────────────────────────────────────────
 
 proc setInputFiles*(el: ElementHandle, files: seq[string]) {.async.} =
   if el.nodeId == 0:
     raise newException(ValueError, "ElementHandle has no nodeId; use page.querySelector")
-  discard await el.tab.sendCommand("DOM.setFileInputFiles",
-      %*{"nodeId": el.nodeId, "files": files})
+  await el.tab.setFileInputFiles(el.nodeId, files)
 
 # ── Select / option handling ────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
-import std/[asyncdispatch, json, times, strutils, sequtils]
-import pkg/cdp as cdp
+import std/[asyncdispatch, json, times, strutils, sequtils, options]
+import devtools as cdp
 import types, element
 
 # ── Types ───────────────────────────────────────────────────────────────────
@@ -94,15 +94,13 @@ proc nth*(loc: Locator; index: int): Locator =
 
 proc accept*(d: DialogInfo; promptText: string = "") {.async.} =
   if promptText.len > 0:
-    discard await d.page.tab.sendCommand("Page.handleJavaScriptDialog",
-        %*{"accept": true, "promptText": promptText})
+    await d.page.tab.handleJavaScriptDialog(
+        cdp.HandleJavaScriptDialogParams(accept: true, promptText: some(promptText)))
   else:
-    discard await d.page.tab.sendCommand("Page.handleJavaScriptDialog",
-        %*{"accept": true})
+    await d.page.tab.handleJavaScriptDialog(true)
 
 proc dismiss*(d: DialogInfo) {.async.} =
-  discard await d.page.tab.sendCommand("Page.handleJavaScriptDialog",
-      %*{"accept": false})
+  await d.page.tab.handleJavaScriptDialog(false)
 
 proc setupDialogHandler(page: Page) {.async.} =
   await page.tab.enablePageDomain()
@@ -155,7 +153,9 @@ proc onConsole*(page: Page; handler: proc(msg: ConsoleMessage): Future[void]) {.
 
 # ── Network interception ────────────────────────────────────────────────────
 
-proc matches(pattern: string, url: string): bool =
+proc matches*(pattern: string, url: string): bool =
+  ## Matches a URL against a glob-style route `pattern` (`*` wildcards or a
+  ## plain prefix). Internal helper; exported for testing.
   if pattern == "*" or pattern == "":
     return true
   if pattern.contains("*"):
@@ -170,9 +170,8 @@ proc matches(pattern: string, url: string): bool =
   url.startsWith(pattern)
 
 proc setupNetworkInterception(page: Page) {.async.} =
-  discard await page.tab.sendCommand("Fetch.enable", %*{
-    "patterns": [%*{"urlPattern": "*", "requestStage": "Request"}]
-  })
+  await page.tab.enableFetchDomain(cdp.FetchEnableParams(patterns: @[
+    cdp.FetchRequestPattern(urlPattern: "*", requestStage: some("Request"))]))
   page.tab.browser.addSessionEventCallback(page.tab.sessionId,
       "Fetch.requestPaused",
       proc(jsn: JsonNode) {.async.} =
@@ -207,13 +206,15 @@ proc continueRequest*(r: Route) {.async.} =
 
 proc fulfillRequest*(r: Route; status: int = 200; body: string = "";
                      headers: seq[tuple[name, value: string]] = @[]) {.async.} =
-  var params = %*{"requestId": r.requestId, "responseCode": status, "body": body}
+  var params = cdp.FulfillRequestParams(requestId: r.requestId, responseCode: status)
+  if body.len > 0:
+    params.body = some(body)
   if headers.len > 0:
-    var h = newJArray()
+    var hs: seq[cdp.HeaderEntry]
     for (n, v) in headers:
-      h.add(%*{"name": n, "value": v})
-    params["responseHeaders"] = h
-  discard await r.page.tab.sendCommand("Fetch.fulfillRequest", params)
+      hs.add(cdp.HeaderEntry(name: n, value: v))
+    params.responseHeaders = some(hs)
+  await r.page.tab.fulfillRequest(params)
 
 proc abortRequest*(r: Route) {.async.} =
   await r.page.tab.failRequest(r.requestId, "BlockedByClient")
@@ -221,30 +222,27 @@ proc abortRequest*(r: Route) {.async.} =
 # ── Device emulation ────────────────────────────────────────────────────────
 
 proc setViewport*(page: Page; width, height: int; deviceScaleFactor: float = 1.0; isMobile: bool = false) {.async.} =
-  discard await page.tab.sendCommand("Emulation.setDeviceMetricsOverride", %*{
-    "width": width, "height": height,
-    "deviceScaleFactor": deviceScaleFactor,
-    "mobile": isMobile
-  })
+  await page.tab.setDeviceMetricsOverride(width, height, deviceScaleFactor, isMobile)
 
 proc setUserAgent*(page: Page; userAgent: string) {.async.} =
-  discard await page.tab.sendCommand("Emulation.setUserAgentOverride", %*{"userAgent": userAgent})
+  await page.tab.setUserAgentOverride(userAgent)
 
 proc setGeolocation*(page: Page; latitude, longitude, accuracy: float) {.async.} =
-  discard await page.tab.sendCommand("Emulation.setGeolocationOverride", %*{
-    "latitude": latitude, "longitude": longitude, "accuracy": accuracy
-  })
+  await page.tab.setGeolocationOverride(latitude, longitude, accuracy)
 
 # ── Page-level keyboard ─────────────────────────────────────────────────────
 
 proc press*(page: Page; key: string) {.async.} =
   let (k, c, kc) = getKeyInfo(key)
-  await page.tab.dispatchKeyEvent("rawKeyDown", %*{"key": k, "code": c, "windowsVirtualKeyCode": kc})
+  await page.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "rawKeyDown",
+      key: some(k), code: some(c), windowsVirtualKeyCode: some(kc)))
   await sleepAsync(30)
   if kc > 0 and kc < 128 and key.len == 1:
-    await page.tab.dispatchKeyEvent("char", %*{"key": k, "code": c, "text": key})
+    await page.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "char",
+        key: some(k), code: some(c), text: some(key)))
     await sleepAsync(10)
-  await page.tab.dispatchKeyEvent("keyUp", %*{"key": k, "code": c, "windowsVirtualKeyCode": kc})
+  await page.tab.dispatchKeyEvent(cdp.DispatchKeyEventParams(`type`: "keyUp",
+      key: some(k), code: some(c), windowsVirtualKeyCode: some(kc)))
 
 # ── Navigation ──────────────────────────────────────────────────────────────
 
@@ -297,10 +295,9 @@ proc goto*(page: Page, url: string; options: NavigationOptions = defaultNavigati
   elif waitFuture != nil:
     discard await waitFuture.withTimeout(options.timeout)
 
-  if navResult.contains("result") and navResult["result"].contains("errorText"):
-    let errText = navResult["result"]["errorText"].getStr()
-    if errText.len > 0:
-      raise newException(cdp.CDPError, "Navigation to " & url & " failed: " & errText)
+  if navResult.errorText.isSome and navResult.errorText.get().len > 0:
+    raise newException(cdp.CDPError, "Navigation to " & url & " failed: " &
+        navResult.errorText.get())
 
 proc waitForNavigation*(page: Page; options: WaitForNavigationOptions = defaultWaitForNavigationOptions()): Future[void] {.async.} =
   await page.tab.enablePageDomain()
@@ -327,8 +324,7 @@ proc evaluate*(page: Page, js: string): Future[JsonNode] {.async.} =
   return newJNull()
 
 proc evaluateHandle*(page: Page, js: string): Future[string] {.async.} =
-  let resp = await page.tab.sendCommand("Runtime.evaluate",
-      %*{"expression": js, "returnByValue": false})
+  let resp = await page.tab.evaluate(cdp.EvaluateParams(expression: js))
   if resp.contains("result") and resp["result"].contains("result"):
     let inner = resp["result"]["result"]
     if inner.contains("objectId"):
@@ -336,10 +332,7 @@ proc evaluateHandle*(page: Page, js: string): Future[string] {.async.} =
   return ""
 
 proc addInitScript*(page: Page, script: string): Future[string] {.async.} =
-  let resp = await page.tab.addScriptToEvaluateOnNewDocument(script)
-  if resp.contains("result") and resp["result"].contains("identifier"):
-    return resp["result"]["identifier"].getStr()
-  return ""
+  result = await page.tab.addScriptToEvaluateOnNewDocument(script)
 
 # ── Simple data extraction ──────────────────────────────────────────────────
 
@@ -356,47 +349,34 @@ proc url*(page: Page): Future[string] {.async.} =
   return ""
 
 proc content*(page: Page): Future[string] {.async.} =
-  let doc = await page.tab.getDocument()
-  let rootNodeId = doc["result"]["root"]["nodeId"].getInt()
-  let resp = await page.tab.sendCommand("DOM.getOuterHTML", %*{"nodeId": rootNodeId})
-  if resp.contains("result") and resp["result"].contains("outerHTML"):
-    return resp["result"]["outerHTML"].getStr()
-  return ""
+  let rootNodeId = await page.tab.getDocument()
+  result = await page.tab.getOuterHTML(rootNodeId)
 
 # ── Screenshot ──────────────────────────────────────────────────────────────
 
 proc screenshot*(page: Page; options: ScreenshotOptions = defaultScreenshotOptions()): Future[string] {.async.} =
-  var params = %*{"format": options.format}
+  var params = cdp.CaptureScreenshotParams(format: options.format)
   if options.quality > 0:
-    params["quality"] = %options.quality
+    params.quality = some(options.quality)
   if options.fullPage:
-    params["fullPage"] = %(true)
-  let resp = await page.tab.captureScreenshot(params)
-  if resp.contains("result") and resp["result"].contains("data"):
-    return resp["result"]["data"].getStr()
-  return ""
+    params.fullPage = some(true)
+  result = await page.tab.captureScreenshot(params)
 
 # ── DOM querying ────────────────────────────────────────────────────────────
 
 proc querySelector*(page: Page, selector: string): Future[element.ElementHandle] {.async.} =
-  let doc = await page.tab.getDocument()
-  let rootNodeId = doc["result"]["root"]["nodeId"].getInt()
-  let resp = await page.tab.sendCommand("DOM.querySelector", %*{"nodeId": rootNodeId, "selector": selector})
-  if resp.contains("result") and resp["result"].contains("nodeId"):
-    let nodeId = resp["result"]["nodeId"]
-    if nodeId.kind != JNull and nodeId.getInt() != 0:
-      return element.ElementHandle(tab: page.tab, selector: selector, index: 0, nodeId: nodeId.getInt())
+  let rootNodeId = await page.tab.getDocument()
+  let nodeId = await page.tab.querySelector(rootNodeId, selector)
+  if nodeId != 0:
+    return element.ElementHandle(tab: page.tab, selector: selector, index: 0, nodeId: nodeId)
   return nil
 
 proc querySelectorAll*(page: Page, selector: string): Future[seq[element.ElementHandle]] {.async.} =
   result = @[]
-  let doc = await page.tab.getDocument()
-  let rootNodeId = doc["result"]["root"]["nodeId"].getInt()
-  let resp = await page.tab.sendCommand("DOM.querySelectorAll", %*{"nodeId": rootNodeId, "selector": selector})
-  if resp.contains("result") and resp["result"].contains("nodeIds"):
-    let nodeIds = resp["result"]["nodeIds"]
-    for i in 0 ..< nodeIds.len:
-      result.add(element.ElementHandle(tab: page.tab, selector: selector, index: i, nodeId: nodeIds[i].getInt()))
+  let rootNodeId = await page.tab.getDocument()
+  let nodeIds = await page.tab.querySelectorAll(rootNodeId, selector)
+  for i, nodeId in nodeIds:
+    result.add(element.ElementHandle(tab: page.tab, selector: selector, index: i, nodeId: nodeId))
 
 # ── Waiting ─────────────────────────────────────────────────────────────────
 
@@ -413,27 +393,36 @@ proc waitForSelector*(page: Page, selector: string; options: WaitForSelectorOpti
 
 proc cookies*(page: Page): Future[seq[Cookie]] {.async.} =
   result = @[]
-  let resp = await page.tab.getCookies()
-  if resp.contains("result") and resp["result"].contains("cookies"):
-    for c in resp["result"]["cookies"].items:
-      result.add(Cookie(
-        name: c["name"].getStr(),
-        value: c["value"].getStr(),
-        domain: if c.contains("domain"): c["domain"].getStr() else: "",
-        path: if c.contains("path"): c["path"].getStr() else: "",
-        httpOnly: if c.contains("httpOnly"): c["httpOnly"].getBool() else: false,
-        secure: if c.contains("secure"): c["secure"].getBool() else: false,
-        sameSite: if c.contains("sameSite"): c["sameSite"].getStr() else: ""
-      ))
+  let cs = await page.tab.getCookies()
+  for c in cs:
+    result.add(Cookie(
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      httpOnly: c.httpOnly,
+      secure: c.secure,
+      sameSite: c.sameSite
+    ))
 
 proc setCookie*(page: Page; cookie: Cookie) {.async.} =
-  discard await page.tab.sendCommand("Network.setCookie", cookie.toJson())
+  var params = cdp.SetCookieParams(name: cookie.name, value: cookie.value)
+  if cookie.domain.len > 0: params.domain = some(cookie.domain)
+  if cookie.path.len > 0: params.path = some(cookie.path)
+  if cookie.httpOnly: params.httpOnly = some(true)
+  if cookie.secure: params.secure = some(true)
+  if cookie.sameSite.len > 0: params.sameSite = some(cookie.sameSite)
+  if cookie.domain.len == 0:
+    params.url = some(await page.url())
+  await page.tab.setCookie(params)
 
 proc deleteCookie*(page: Page; name: string) {.async.} =
-  discard await page.tab.sendCommand("Network.deleteCookies", %*{"name": name})
+  var params = cdp.DeleteCookiesParams(name: name)
+  params.url = some(await page.url())
+  await page.tab.deleteCookies(params)
 
 proc clearCookies*(page: Page) {.async.} =
-  discard await page.tab.sendCommand("Network.clearBrowserCookies")
+  await page.tab.clearBrowserCookies()
 
 # ── Storage ─────────────────────────────────────────────────────────────────
 

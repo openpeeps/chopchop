@@ -16,7 +16,7 @@ when isMainModule:
       echo "H1: ", await h1.innerText()
 
       echo "\n=== Locator: Filter ==="
-      let filtered = page.locator("a").filter(hasText = "More")
+      let filtered = page.locator("a").filter(hasText = "Learn")
       echo "Filtered count: ", await filtered.count()
       echo "Filtered href: ", await filtered.getAttribute("href")
 

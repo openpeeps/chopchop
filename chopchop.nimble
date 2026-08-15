@@ -10,4 +10,5 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 2.2.0"
-requires "cdp >= 0.1.0"
+requires "powpow >= 0.1.9"
+requires "openparser >= 0.1.9"

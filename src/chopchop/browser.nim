@@ -1,5 +1,5 @@
 import std/[asyncdispatch]
-import pkg/cdp as cdp
+import devtools as cdp
 import types, page
 
 type
